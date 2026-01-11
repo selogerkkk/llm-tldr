@@ -272,7 +272,10 @@ def extract_units_from_project(project_path: str, lang: str = "python", respect_
     project = Path(project_path).resolve()
     units = []
 
-    structure = get_code_structure(str(project), language=lang, max_results=100000)
+    from tldr.tldrignore import load_ignore_patterns
+    ignore_spec = load_ignore_patterns(project) if respect_ignore else None
+
+    structure = get_code_structure(str(project), language=lang, max_results=100000, ignore_spec=ignore_spec)
 
     # Filter ignored files
     if respect_ignore:
