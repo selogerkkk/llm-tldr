@@ -945,6 +945,10 @@ def build_semantic_index(
                 chunk_end = min(i + BATCH_SIZE, num_units)
                 chunk_texts = texts[i:chunk_end]
 
+                current_unit = units[i]
+                short_path = current_unit.file if len(current_unit.file) < 40 else "..." + current_unit.file[-37:]
+                progress.update(task, description=f"[bold green]Embedding {short_path}::{current_unit.name}")
+
                 result = model_obj.encode(
                     chunk_texts,
                     batch_size=BATCH_SIZE,
