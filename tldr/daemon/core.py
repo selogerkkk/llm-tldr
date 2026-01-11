@@ -74,6 +74,7 @@ class TLDRDaemon:
         self._start_time = time.time()
         self._shutdown_requested = False
         self._socket: Optional[socket.socket] = None
+        self._pidfile: Optional[Any] = None  # Locked PID file handle from startup.py
 
         # P5 Features: Content-hash deduplication and query memoization
         self.dedup_index: Optional[ContentHashedIndex] = None
@@ -1098,19 +1099,61 @@ class TLDRDaemon:
             except Exception as e:
                 logger.debug(f"Could not re-index {file_path}: {e}")
 
+    def _get_tmp_pid_path(self) -> Path:
+        """Get PID file path in /tmp (matches socket path pattern)."""
+        hash_val = hashlib.md5(str(self.project).encode()).hexdigest()[:8]
+        return Path(f"/tmp/tldr-{hash_val}.pid")
+
     def write_pid_file(self):
-        """Write daemon PID to .tldr/daemon.pid."""
+        """Write daemon PID to .tldr/daemon.pid (and /tmp if not already done).
+
+        If _pidfile is set, startup.py already wrote and locked /tmp/tldr-{hash}.pid.
+        We only write to .tldr/daemon.pid for backwards compatibility.
+        """
+        pid = str(os.getpid())
+
+        # Write to .tldr/daemon.pid (backwards compat)
         self.tldr_dir.mkdir(parents=True, exist_ok=True)
         pid_file = self.tldr_dir / "daemon.pid"
-        pid_file.write_text(str(os.getpid()))
-        logger.info(f"Wrote PID {os.getpid()} to {pid_file}")
+        pid_file.write_text(pid)
+
+        # Only write to /tmp if startup.py didn't already (legacy path)
+        if self._pidfile is None:
+            tmp_pid_file = self._get_tmp_pid_path()
+            tmp_pid_file.write_text(pid)
+            logger.info(f"Wrote PID {pid} to {pid_file} and {tmp_pid_file}")
+        else:
+            logger.info(f"Wrote PID {pid} to {pid_file} (lock held by startup)")
 
     def remove_pid_file(self):
-        """Remove the PID file."""
+        """Remove PID files and release lock."""
+        # Remove .tldr/daemon.pid
         pid_file = self.tldr_dir / "daemon.pid"
         if pid_file.exists():
-            pid_file.unlink()
-            logger.info(f"Removed PID file {pid_file}")
+            try:
+                pid_file.unlink()
+            except OSError:
+                pass
+
+        # Close and remove /tmp/tldr-{hash}.pid
+        # If _pidfile is set, closing it releases the flock
+        if self._pidfile is not None:
+            try:
+                self._pidfile.close()  # This releases the flock
+            except Exception:
+                pass
+            self._pidfile = None
+            logger.info("Released PID file lock")
+
+        # Also try to remove the /tmp file (in case it exists)
+        tmp_pid_file = self._get_tmp_pid_path()
+        if tmp_pid_file.exists():
+            try:
+                tmp_pid_file.unlink()
+            except OSError:
+                pass
+
+        logger.info("Removed PID files")
 
     def write_status(self, status: str):
         """Write status to .tldr/status file."""
