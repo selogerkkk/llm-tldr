@@ -47,6 +47,40 @@ SUPPORTED_MODELS = {
 
 DEFAULT_MODEL = "bge-large-en-v1.5"
 
+# Project root markers - files that indicate a project root
+PROJECT_ROOT_MARKERS = [".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod", ".tldr"]
+
+
+def _find_project_root(start_path: Path) -> Path:
+    """Find project root by walking up from start_path.
+
+    Looks for common project markers (.git, pyproject.toml, etc.).
+    Also respects CLAUDE_PROJECT_DIR environment variable.
+
+    Args:
+        start_path: Path to start searching from.
+
+    Returns:
+        Project root path, or start_path if no markers found.
+    """
+    # Check environment variable first
+    env_root = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env_root:
+        env_path = Path(env_root).resolve()
+        if env_path.exists():
+            return env_path
+
+    # Walk up looking for project markers
+    current = start_path.resolve()
+    while current != current.parent:
+        for marker in PROJECT_ROOT_MARKERS:
+            if (current / marker).exists():
+                return current
+        current = current.parent
+
+    # No markers found - use start_path
+    return start_path.resolve()
+
 
 @dataclass
 class EmbeddingUnit:
@@ -867,9 +901,12 @@ def build_semantic_index(
 
     console = _get_progress_console() if show_progress else None
 
-    # Ensure .tldrignore exists (create with defaults if not)
-    project = Path(project_path).resolve()
-    created, message = ensure_tldrignore(project)
+    # Resolve paths: scan_path is where to look for code, project_root is where to store cache
+    scan_path = Path(project_path).resolve()
+    project_root = _find_project_root(scan_path)
+
+    # Ensure .tldrignore exists at project root (create with defaults if not)
+    created, message = ensure_tldrignore(project_root)
     if created and console:
         console.print(f"[yellow]{message}[/yellow]")
 
@@ -880,10 +917,11 @@ def build_semantic_index(
     else:
         hf_name = model_key
 
-    cache_dir = project / ".tldr" / "cache" / "semantic"
+    # Always store cache at project root, not scan path
+    cache_dir = project_root / ".tldr" / "cache" / "semantic"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract all units (respecting .tldrignore)
+    # Extract all units (respecting .tldrignore) - scan from scan_path, not project_root
     if console:
         with console.status("[bold green]Extracting code units...") as status:
             def update_progress(file_path, units_count, total_files):
@@ -892,7 +930,7 @@ def build_semantic_index(
 
             if lang == "all":
                 status.update("[bold green]Scanning project languages...")
-                target_languages = _detect_project_languages(project, respect_ignore=respect_ignore)
+                target_languages = _detect_project_languages(scan_path, respect_ignore=respect_ignore)
                 if not target_languages:
                     console.print("[yellow]No supported languages detected in project[/yellow]")
                     return 0
@@ -902,20 +940,20 @@ def build_semantic_index(
                 units = []
                 for lang_name in target_languages:
                     status.update(f"[bold green]Extracting {lang_name} code units...")
-                    units.extend(extract_units_from_project(str(project), lang=lang_name, respect_ignore=respect_ignore, progress_callback=update_progress))
+                    units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, progress_callback=update_progress))
             else:
-                units = extract_units_from_project(str(project), lang=lang, respect_ignore=respect_ignore, progress_callback=update_progress)
+                units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, progress_callback=update_progress)
             status.update(f"[bold green]Extracted {len(units)} code units")
     else:
         if lang == "all":
-            target_languages = _detect_project_languages(project, respect_ignore=respect_ignore)
+            target_languages = _detect_project_languages(scan_path, respect_ignore=respect_ignore)
             if not target_languages:
                 return 0
             units = []
             for lang_name in target_languages:
-                units.extend(extract_units_from_project(str(project), lang=lang_name, respect_ignore=respect_ignore))
+                units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore))
         else:
-            units = extract_units_from_project(str(project), lang=lang, respect_ignore=respect_ignore)
+            units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore)
 
     if not units:
         return 0
@@ -1019,8 +1057,10 @@ def semantic_search(
     if not query or not query.strip():
         return []
 
-    project = Path(project_path).resolve()
-    cache_dir = project / ".tldr" / "cache" / "semantic"
+    # Find project root for cache location (matches build_semantic_index behavior)
+    scan_path = Path(project_path).resolve()
+    project_root = _find_project_root(scan_path)
+    cache_dir = project_root / ".tldr" / "cache" / "semantic"
 
     index_file = cache_dir / "index.faiss"
     metadata_file = cache_dir / "metadata.json"

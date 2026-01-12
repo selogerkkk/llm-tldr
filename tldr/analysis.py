@@ -13,10 +13,10 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
-    from .cross_file_calls import CallGraph
+    from .cross_file_calls import ProjectCallGraph
 
 
 @dataclass
@@ -39,12 +39,12 @@ class FunctionRef:
 
 
 def build_reverse_graph(
-    edges: list[tuple[str, str, str, str]],
+    edges: Iterable[tuple[str, str, str, str]],
 ) -> dict[FunctionRef, list[FunctionRef]]:
     """Build reverse call graph: who calls each function?
 
     Args:
-        edges: List of (from_file, from_func, to_file, to_func) tuples
+        edges: Iterable of (from_file, from_func, to_file, to_func) tuples
 
     Returns:
         Dict mapping callee -> list of callers
@@ -58,12 +58,12 @@ def build_reverse_graph(
 
 
 def build_forward_graph(
-    edges: list[tuple[str, str, str, str]],
+    edges: Iterable[tuple[str, str, str, str]],
 ) -> dict[FunctionRef, list[FunctionRef]]:
     """Build forward call graph: what does each function call?
 
     Args:
-        edges: List of (from_file, from_func, to_file, to_func) tuples
+        edges: Iterable of (from_file, from_func, to_file, to_func) tuples
 
     Returns:
         Dict mapping caller -> list of callees
@@ -77,7 +77,7 @@ def build_forward_graph(
 
 
 def impact_analysis(
-    call_graph: "CallGraph",
+    call_graph: "ProjectCallGraph",
     target_func: str,
     max_depth: int = 3,
     target_file: str | None = None,
@@ -88,7 +88,7 @@ def impact_analysis(
     what code would be affected by changing a function.
 
     Args:
-        call_graph: CallGraph from cross_file_calls
+        call_graph: ProjectCallGraph from cross_file_calls
         target_func: Function name to find callers of
         max_depth: How deep to traverse callers
         target_file: Optional file filter
@@ -99,10 +99,7 @@ def impact_analysis(
     edges = call_graph.edges
     reverse = build_reverse_graph(edges)
 
-    # Find target function(s)
-    targets = []
-
-    # Check all callees
+    # Find target function(s) as callees (functions being called)
     all_callees = set()
     for from_file, from_func, to_file, to_func in edges:
         callee = FunctionRef(file=to_file, name=to_func)
@@ -113,6 +110,30 @@ def impact_analysis(
     targets = list(all_callees)
 
     if not targets:
+        # Function not found as callee - check if it exists as a caller
+        # (function calls others but is never called itself = entry point)
+        callers_only = set()
+        for from_file, from_func, to_file, to_func in edges:
+            if from_func == target_func:
+                if target_file is None or target_file in from_file:
+                    callers_only.add(FunctionRef(file=from_file, name=from_func))
+
+        if callers_only:
+            # Function exists in graph but has no callers - return entry point info
+            return {
+                "targets": {
+                    str(ref): {
+                        "function": ref.name,
+                        "file": ref.file,
+                        "caller_count": 0,
+                        "callers": [],
+                        "truncated": False,
+                        "note": "Entry point - never called by other code in graph",
+                    }
+                    for ref in callers_only
+                },
+                "total_targets": len(callers_only),
+            }
         return {"error": f"Function '{target_func}' not found in call graph"}
 
     results = {}
@@ -160,14 +181,14 @@ def _build_caller_tree(
 
 
 def dead_code_analysis(
-    call_graph: "CallGraph",
+    call_graph: "ProjectCallGraph",
     all_functions: list[dict],
     entry_points: list[str] | None = None,
 ) -> dict:
     """Find functions that are never called (excluding entry points).
 
     Args:
-        call_graph: CallGraph from cross_file_calls
+        call_graph: ProjectCallGraph from cross_file_calls
         all_functions: List of {file, name} dicts from structure analysis
         entry_points: Additional entry point patterns to exclude
 
@@ -242,7 +263,7 @@ def dead_code_analysis(
     }
 
 
-def architecture_analysis(call_graph: "CallGraph") -> dict:
+def architecture_analysis(call_graph: "ProjectCallGraph") -> dict:
     """Detect architectural layers from call patterns.
 
     Heuristics:
@@ -252,7 +273,7 @@ def architecture_analysis(call_graph: "CallGraph") -> dict:
     - Detect circular dependencies
 
     Args:
-        call_graph: CallGraph from cross_file_calls
+        call_graph: ProjectCallGraph from cross_file_calls
 
     Returns:
         Dict with layer info, directory analysis, and circular deps
@@ -326,9 +347,7 @@ def architecture_analysis(call_graph: "CallGraph") -> dict:
         )
 
     return {
-        "entry_layer": [
-            {"file": f.file, "function": f.name} for f in entry_layer[:20]
-        ],
+        "entry_layer": [{"file": f.file, "function": f.name} for f in entry_layer[:20]],
         "leaf_layer": [{"file": f.file, "function": f.name} for f in leaf_layer[:20]],
         "middle_layer_count": len(middle_layer),
         "directory_layers": layer_inference,

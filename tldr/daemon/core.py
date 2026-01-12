@@ -221,7 +221,13 @@ class TLDRDaemon:
         return {"status": "ok"}
 
     def _get_session_stats(self, session_id: str) -> SessionStats:
-        """Get or create session stats for a session ID."""
+        """Get or create session stats for a session ID.
+
+        Normalizes session_id to 8 chars to match status.py convention.
+        This allows both full UUIDs and truncated IDs to work.
+        """
+        # Normalize to 8 chars (matches status.py truncation)
+        session_id = session_id[:8] if session_id else session_id
         if session_id not in self._session_stats:
             self._session_stats[session_id] = SessionStats(session_id=session_id)
         return self._session_stats[session_id]
@@ -302,7 +308,9 @@ class TLDRDaemon:
         session_id = command.get("session")
         session_stats = None
         if session_id:
-            stats = self._session_stats.get(session_id)
+            # Normalize to 8 chars (matches status.py convention)
+            normalized_id = session_id[:8] if session_id else session_id
+            stats = self._session_stats.get(normalized_id)
             if stats:
                 session_stats = stats.to_dict()
 
@@ -312,6 +320,7 @@ class TLDRDaemon:
             "total_raw_tokens": sum(s.raw_tokens for s in self._session_stats.values()),
             "total_tldr_tokens": sum(s.tldr_tokens for s in self._session_stats.values()),
             "total_requests": sum(s.requests for s in self._session_stats.values()),
+            "session_ids": list(self._session_stats.keys()),  # Debug: show stored IDs
         }
 
         # Get all hook stats (P8)

@@ -119,10 +119,10 @@ def load_ignore_patterns(project_dir: str | Path) -> "PathSpec":
 
     if tldrignore_path.exists():
         content = tldrignore_path.read_text()
-        patterns = content.splitlines()
+        patterns: list[str] = content.splitlines()
     else:
         # Use defaults if no .tldrignore exists
-        patterns = DEFAULT_TEMPLATE.splitlines()
+        patterns = list(DEFAULT_TEMPLATE.splitlines())
 
     return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
@@ -137,6 +137,10 @@ def ensure_tldrignore(project_dir: str | Path) -> tuple[bool, str]:
         Tuple of (created: bool, message: str)
     """
     project_path = Path(project_dir)
+
+    if not project_path.exists():
+        return False, f"Project directory does not exist: {project_path}"
+
     tldrignore_path = project_path / ".tldrignore"
 
     if tldrignore_path.exists():
@@ -145,14 +149,17 @@ def ensure_tldrignore(project_dir: str | Path) -> tuple[bool, str]:
     # Create with default template
     tldrignore_path.write_text(DEFAULT_TEMPLATE)
 
-    return True, f"""Created .tldrignore with sensible defaults:
+    return (
+        True,
+        """Created .tldrignore with sensible defaults:
   - node_modules/, .venv/, __pycache__/
   - dist/, build/, *.egg-info/
   - Binary files (*.so, *.dll, *.whl)
   - Security files (.env, *.pem, *.key)
 
 Review .tldrignore before indexing large codebases.
-Edit to exclude vendor code, test fixtures, etc."""
+Edit to exclude vendor code, test fixtures, etc.""",
+    )
 
 
 def should_ignore(

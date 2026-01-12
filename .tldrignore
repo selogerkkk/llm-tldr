@@ -78,7 +78,16 @@ Thumbs.db
 
 # ===================
 # Project-specific
-# Add your custom patterns below
+# Agent context optimization
 # ===================
+benchmark/
+archive/
+htmlcov/
+thoughts/
+docs/
+logs/
+*.egg-info/
+
+# Test fixtures (large sample codebases)
 # large_test_fixtures/
 # data/

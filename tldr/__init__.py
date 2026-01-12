@@ -15,7 +15,7 @@ try:
     from importlib.metadata import version
     __version__ = version("llm-tldr")
 except Exception:
-    __version__ = "1.0.5"
+    __version__ = "1.1.4"
 __author__ = "parcadei"
 
 # Original exports
