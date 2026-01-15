@@ -51,7 +51,7 @@ class TestDaemonQueryJsonFlag:
                 str(project_path),
             ]
 
-            with patch("sys.argv", ["tldr"] + test_args):
+            with patch("sys.argv", ["tldr", *test_args]):
                 try:
                     main()
                 except SystemExit:
@@ -158,7 +158,7 @@ class TestDaemonQueryJsonFlag:
             captured = capsys.readouterr()
             assert "Error: either CMD or --json must be provided" in captured.err
 
-    def test_query_json_precedence_over_cmd(self, capsys):
+    def test_query_json_precedence_over_cmd(self):
         """Should use --json payload and ignore cmd argument when both provided."""
         from tldr.cli import main
 
@@ -194,7 +194,7 @@ class TestDaemonQueryJsonFlag:
             assert called_with_command == json.loads(json_payload)
             assert called_with_command != {"cmd": "ping"}
 
-    def test_query_complex_json_payload(self, capsys):
+    def test_query_complex_json_payload(self):
         """Should handle complex nested JSON payloads."""
         from tldr.cli import main
 
@@ -245,7 +245,7 @@ class TestDaemonQueryJsonFlag:
             assert called_with_command["filters"]["language"] == "python"
             assert called_with_command["limit"] == 10
 
-    def test_query_json_with_special_characters(self, capsys):
+    def test_query_json_with_special_characters(self):
         """Should handle JSON with special characters and unicode."""
         from tldr.cli import main
 
