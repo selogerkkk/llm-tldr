@@ -385,6 +385,11 @@ Semantic Search:
         default=None,
         help="Embedding model: bge-large-en-v1.5 (1.3GB, default) or all-MiniLM-L6-v2 (80MB)",
     )
+    index_p.add_argument(
+        "--skip-call-graph",
+        action="store_true",
+        help="Skip call graph generation (use if already cached, faster)",
+    )
 
     # tldr semantic search <query>
     search_p = semantic_sub.add_parser("search", help="Search semantically")
@@ -969,7 +974,8 @@ Semantic Search:
 
             if args.action == "index":
                 respect_ignore = not getattr(args, 'no_ignore', False)
-                count = build_semantic_index(args.path, lang=args.lang, model=args.model, respect_ignore=respect_ignore)
+                skip_call_graph = getattr(args, 'skip_call_graph', False)
+                count = build_semantic_index(args.path, lang=args.lang, model=args.model, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph)
                 print(f"Indexed {count} code units")
 
             elif args.action == "search":

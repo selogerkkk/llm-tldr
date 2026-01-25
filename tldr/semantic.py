@@ -333,7 +333,7 @@ def compute_embedding(text: str, model_name: Optional[str] = None):
     return np.array(embedding, dtype=np.float32)
 
 
-def extract_units_from_project(project_path: str, lang: str = "python", respect_ignore: bool = True, progress_callback=None) -> List[EmbeddingUnit]:
+def extract_units_from_project(project_path: str, lang: str = "python", respect_ignore: bool = True, progress_callback=None, skip_call_graph: bool = False) -> List[EmbeddingUnit]:
     """Extract all functions/methods/classes from a project.
 
     Uses existing TLDR APIs:
@@ -371,29 +371,34 @@ def extract_units_from_project(project_path: str, lang: str = "python", respect_
         ]
 
     # Build call graph (L2)
-    try:
-        call_graph = build_project_call_graph(str(project), language=lang)
-
-        # Build call/called_by maps
-        calls_map = {}  # func -> [called functions]
-        called_by_map = {}  # func -> [calling functions]
-
-        for edge in call_graph.edges:
-            src_file, src_func, dst_file, dst_func = edge
-
-            # Forward: src calls dst
-            if src_func not in calls_map:
-                calls_map[src_func] = []
-            calls_map[src_func].append(dst_func)
-
-            # Backward: dst is called by src
-            if dst_func not in called_by_map:
-                called_by_map[dst_func] = []
-            called_by_map[dst_func].append(src_func)
-    except Exception:
-        # Call graph may not be available for all projects
+    if skip_call_graph:
+        # Skip call graph generation for faster indexing
         calls_map = {}
         called_by_map = {}
+    else:
+        try:
+            call_graph = build_project_call_graph(str(project), language=lang)
+
+            # Build call/called_by maps
+            calls_map = {}  # func -> [called functions]
+            called_by_map = {}  # func -> [calling functions]
+
+            for edge in call_graph.edges:
+                src_file, src_func, dst_file, dst_func = edge
+
+                # Forward: src calls dst
+                if src_func not in calls_map:
+                    calls_map[src_func] = []
+                calls_map[src_func].append(dst_func)
+
+                # Backward: dst is called by src
+                if dst_func not in called_by_map:
+                    called_by_map[dst_func] = []
+                called_by_map[dst_func].append(src_func)
+        except Exception:
+            # Call graph may not be available for all projects
+            calls_map = {}
+            called_by_map = {}
 
     # Process files in parallel for better performance
     files = structure.get("files", [])
@@ -790,9 +795,12 @@ def _process_file_for_extraction(
             from tldr.cross_file_calls import _get_php_parser
 
             parser = _get_php_parser()
-            if parser:
+            if not parser:
+                logger.warning(f"No PHP parser available for {file_path}")
+            else:
                 tree = parser.parse(bytes(content, "utf8"))
                 root_node = tree.root_node
+                logger.debug(f"Parsed {file_path} with PHP tree-sitter, root: {root_node.type}")
 
                 def find_parent_class(node, class_name=None):
                     """Find parent class by walking up from method node."""
@@ -835,7 +843,7 @@ def _process_file_for_extraction(
 
                 def walk_tree(node):
                     """Walk tree-sitter AST to find functions, classes, and traits."""
-                    if node.type == "function_declaration":
+                    if node.type in ("function_declaration", "method_declaration"):
                         func_name = None
                         for child in node.children:
                             if child.type == "name":
@@ -887,9 +895,11 @@ def _process_file_for_extraction(
                         walk_tree(child)
 
                 walk_tree(root_node)
+                logger.debug(f"PHP AST extraction for {file_path}: {len(ast_info['functions'])} functions, {len(ast_info['classes'])} classes, {len(ast_info['methods'])} methods")
+                logger.debug(f"Sample signatures: {list(all_signatures.keys())[:3]}")
 
         except Exception as e:
-            logger.debug(f"PHP AST parse failed for {file_path}: {e}")
+            logger.warning(f"PHP AST parse failed for {file_path}: {e}")
 
     # Get dependencies (imports) - single call
     dependencies = ""
@@ -1098,6 +1108,7 @@ def build_semantic_index(
     model: Optional[str] = None,
     show_progress: bool = True,
     respect_ignore: bool = True,
+    skip_call_graph: bool = False,
 ) -> int:
     """Build and save FAISS index + metadata for a project.
 
@@ -1111,6 +1122,7 @@ def build_semantic_index(
         model: Model name from SUPPORTED_MODELS or HuggingFace name.
         show_progress: Show progress spinner (default: True).
         respect_ignore: If True, respect .tldrignore patterns (default True).
+        skip_call_graph: Skip call graph generation (faster, uses empty maps).
 
     Returns:
         Number of indexed units.
@@ -1160,9 +1172,9 @@ def build_semantic_index(
                 units = []
                 for lang_name in target_languages:
                     status.update(f"[bold green]Extracting {lang_name} code units...")
-                    units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, progress_callback=update_progress))
+                    units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, progress_callback=update_progress, skip_call_graph=skip_call_graph))
             else:
-                units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, progress_callback=update_progress)
+                units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, progress_callback=update_progress, skip_call_graph=skip_call_graph)
             status.update(f"[bold green]Extracted {len(units)} code units")
     else:
         if lang == "all":
@@ -1171,9 +1183,9 @@ def build_semantic_index(
                 return 0
             units = []
             for lang_name in target_languages:
-                units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore))
+                units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph))
         else:
-            units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore)
+            units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph)
 
     if not units:
         return 0
