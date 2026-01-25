@@ -135,21 +135,33 @@ def _get_device() -> str:
     """Auto-detect the best available device for embeddings.
 
     Returns:
-        "cuda" if GPU is available, otherwise "cpu".
+        "cuda", "mps", or "cpu" - best available device.
+    Priority: CUDA (NVIDIA) > MPS (Apple M1/M2/M3) > CPU
     """
     try:
         import torch
+
+        # Try CUDA first (NVIDIA GPUs)
         if torch.cuda.is_available():
-            # Check if CUDA is actually working (not just available)
             try:
-                # Test with a small tensor
                 test_tensor = torch.zeros(1).cuda()
                 del test_tensor
                 torch.cuda.empty_cache()
                 return "cuda"
             except Exception as e:
-                logger.debug(f"CUDA available but failed: {e}, falling back to CPU")
-                return "cpu"
+                logger.debug(f"CUDA available but failed: {e}, falling back")
+                pass
+
+        # Try MPS for Apple Silicon (M1/M2/M3)
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            try:
+                # Test MPS actually works
+                test_tensor = torch.zeros(1).to("mps")
+                del test_tensor
+                return "mps"
+            except Exception as e:
+                logger.debug(f"MPS available but failed: {e}, falling back to CPU")
+                pass
     except ImportError:
         logger.debug("PyTorch not available, using CPU")
     except Exception as e:
@@ -236,9 +248,11 @@ def get_model(model_name: Optional[str] = None):
     device = _get_device()
 
     if device == "cuda":
-        logger.info(f"🚀 Using GPU (CUDA) for embeddings - {hf_name}")
+        logger.info(f"[GPU] Using NVIDIA GPU (CUDA) for embeddings - {hf_name}")
+    elif device == "mps":
+        logger.info(f"[GPU] Using Apple Silicon GPU (MPS) for embeddings - {hf_name}")
     else:
-        logger.debug(f"Using CPU for embeddings - {hf_name}")
+        logger.debug(f"[CPU] Using CPU for embeddings - {hf_name}")
 
     _model = SentenceTransformer(hf_name, device=device)
     _model_name = hf_name
