@@ -833,8 +833,8 @@ def _process_file_for_extraction(
                                 return content[child.start_byte:child.end_byte]
                     return find_parent_class(parent, class_name)
 
-                def extract_code_preview(node, start_line):
-                    """Extract first 10 lines from function body."""
+                def extract_code_preview(node, start_line, func_name=None):
+                    """Extract first 10 lines from function body, or signature if abstract/interface."""
                     # Find function body
                     body_node = None
                     for child in node.children:
@@ -846,6 +846,11 @@ def _process_file_for_extraction(
                         body_start = body_node.start_point[0]
                         body_end = min(body_node.end_point[0] + 1, body_start + 10)
                         return '\n'.join(lines[body_start:body_end])
+
+                    # No body (interface/abstract method) - show the signature line
+                    if func_name:
+                        sig = extract_function_signature(node, func_name)
+                        return sig + ";"
                     return ""
 
                 def extract_function_signature(node, name):
@@ -857,7 +862,7 @@ def _process_file_for_extraction(
                                 if param.type == "simple_parameter" or param.type == "variadic_parameter":
                                     for param_child in param.children:
                                         if param_child.type == "variable_name":
-                                            params.append("$" + content[param_child.start_byte:param_child.end_byte])
+                                            params.append(content[param_child.start_byte:param_child.end_byte])
                                             break
                     return f"function {name}({', '.join(params)})"
 
@@ -873,7 +878,7 @@ def _process_file_for_extraction(
                         if func_name:
                             start_line = node.start_point[0] + 1
                             parent_class = find_parent_class(node)
-                            code_preview = extract_code_preview(node, start_line)
+                            code_preview = extract_code_preview(node, start_line, func_name)
                             signature = extract_function_signature(node, func_name)
 
                             if parent_class:
