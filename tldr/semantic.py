@@ -333,7 +333,7 @@ def compute_embedding(text: str, model_name: Optional[str] = None):
     return np.array(embedding, dtype=np.float32)
 
 
-def extract_units_from_project(project_path: str, lang: str = "python", respect_ignore: bool = True, progress_callback=None, skip_call_graph: bool = False) -> List[EmbeddingUnit]:
+def extract_units_from_project(project_path: str, lang: str = "python", respect_ignore: bool = True, progress_callback=None, skip_call_graph: bool = False, project_root: str = None) -> List[EmbeddingUnit]:
     """Extract all functions/methods/classes from a project.
 
     Uses existing TLDR APIs:
@@ -356,8 +356,11 @@ def extract_units_from_project(project_path: str, lang: str = "python", respect_
     project = Path(project_path).resolve()
     units = []
 
+    # Use project_root if provided, otherwise use project
+    base_path = Path(project_root) if project_root else project
+
     # Load ignore spec before getting structure
-    ignore_spec = load_ignore_patterns(project) if respect_ignore else None
+    ignore_spec = load_ignore_patterns(base_path) if respect_ignore else None
 
     # Get code structure (L1) - use high limit for semantic index
     structure = get_code_structure(str(project), language=lang, max_results=100000, ignore_spec=ignore_spec)
@@ -403,6 +406,17 @@ def extract_units_from_project(project_path: str, lang: str = "python", respect_
     # Process files in parallel for better performance
     files = structure.get("files", [])
     max_workers = int(os.environ.get("TLDR_MAX_WORKERS", os.cpu_count() or 4))
+
+    # Prepend base_path to file paths to get absolute paths
+    for file_info in files:
+        file_path = file_info.get("path", "")
+        # Convert relative path to absolute path
+        if not Path(file_path).is_absolute():
+            # If file_path is relative to scan_path, make it relative to base_path
+            # But since we scanned from scan_path, we need to resolve it
+            file_info["absolute_path"] = str(base_path / file_path)
+        else:
+            file_info["absolute_path"] = file_path
 
     # Use parallel processing if we have multiple files
     if len(files) > 1 and max_workers > 1:
@@ -711,7 +725,13 @@ def _process_file_for_extraction(
     units = []
     project = Path(project_path)
     file_path = file_info.get("path", "")
-    full_path = project / file_path
+
+    # Use absolute_path if available (from base_path resolution), otherwise relative
+    absolute_file_path = file_info.get("absolute_path")
+    if absolute_file_path:
+        full_path = Path(absolute_file_path)
+    else:
+        full_path = project / file_path
 
     if not full_path.exists():
         return units
@@ -969,14 +989,17 @@ def _process_file_for_extraction(
                     func_name = method_key  # Use qualified name for signature lookup
                     break
 
+        # Get original func_name for qualified_name
+        original_name = func_name.split(".")[-1] if "." in func_name else func_name
+
         unit = EmbeddingUnit(
-            name=func_name.split(".")[-1] if "." in func_name else func_name,
-            qualified_name=f"{file_path.replace('/', '.')}.{func_name.split('.')[-1] if '.' in func_name else func_name}",
+            name=original_name,
+            qualified_name=f"{file_path.replace('/', '.')}.{original_name}",
             file=file_path,
             line=func_info.get("line", 1),
             language=lang,
             unit_type="function",
-            signature=all_signatures.get(func_name, f"def {func_name.split('.')[-1] if '.' in func_name else func_name}(...)"),
+            signature=all_signatures.get(func_name, f"def {original_name}(...)"),
             docstring=all_docstrings.get(func_name, ""),
             calls=calls_map.get(func_name, [])[:5],
             called_by=called_by_map.get(func_name, [])[:5],
@@ -1183,9 +1206,9 @@ def build_semantic_index(
                 units = []
                 for lang_name in target_languages:
                     status.update(f"[bold green]Extracting {lang_name} code units...")
-                    units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, progress_callback=update_progress, skip_call_graph=skip_call_graph))
+                    units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, progress_callback=update_progress, skip_call_graph=skip_call_graph, project_root=str(project_root)))
             else:
-                units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, progress_callback=update_progress, skip_call_graph=skip_call_graph)
+                units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, progress_callback=update_progress, skip_call_graph=skip_call_graph, project_root=str(project_root))
             status.update(f"[bold green]Extracted {len(units)} code units")
     else:
         if lang == "all":
@@ -1194,9 +1217,9 @@ def build_semantic_index(
                 return 0
             units = []
             for lang_name in target_languages:
-                units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph))
+                units.extend(extract_units_from_project(str(scan_path), lang=lang_name, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph, project_root=str(project_root)))
         else:
-            units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph)
+            units = extract_units_from_project(str(scan_path), lang=lang, respect_ignore=respect_ignore, skip_call_graph=skip_call_graph, project_root=str(project_root))
 
     if not units:
         return 0
